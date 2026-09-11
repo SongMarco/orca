@@ -89,6 +89,7 @@ export class DesktopRelayService {
           isCurrent,
           refreshAccessToken,
           resolvePreferredRegion: regionPreference.resolvePreferredRegion,
+          measureRegionDecision: regionPreference.measureRegionDecision,
           onAssignedCellActive: regionPreference.noteAssignedCell,
           onStatus: options.onStatus
         })
@@ -327,10 +328,8 @@ export class DesktopRelayService {
     if (expiresAt !== null) {
       // Why: an unscanned QR must stop holding a standing control when its
       // server invite expires, even if no renderer survives to report closure.
-      this.demandExpiryTimer = setTimeout(
-        () => this.refreshDemand(),
-        Math.max(1, expiresAt - Date.now() + 1)
-      )
+      const delay = Math.max(1, expiresAt - Date.now() + 1)
+      this.demandExpiryTimer = setTimeout(() => this.refreshDemand(), delay)
     }
   }
 }
