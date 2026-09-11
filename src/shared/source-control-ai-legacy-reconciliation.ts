@@ -24,6 +24,12 @@ function hasEntries(value: Record<string, unknown> | null | undefined): boolean 
   return Object.keys(value ?? {}).length > 0
 }
 
+// A legacy block written without a key reads back as undefined; compare it as the empty
+// string the normalizer defaults it to, so an absent key is not a perpetual "changed".
+function legacyString(value: string | undefined): string {
+  return value ?? ''
+}
+
 function legacyCoreChanges(
   legacy: CommitMessageAiSettings,
   projected: CommitMessageAiSettings
@@ -31,8 +37,9 @@ function legacyCoreChanges(
   return {
     enabled: legacy.enabled !== projected.enabled,
     agentId: legacy.agentId !== projected.agentId,
-    customPrompt: legacy.customPrompt !== projected.customPrompt,
-    customAgentCommand: legacy.customAgentCommand !== projected.customAgentCommand
+    customPrompt: legacyString(legacy.customPrompt) !== legacyString(projected.customPrompt),
+    customAgentCommand:
+      legacyString(legacy.customAgentCommand) !== legacyString(projected.customAgentCommand)
   }
 }
 
@@ -105,7 +112,7 @@ export function mergeLegacyCommitMessageAiIntoSourceControlAi(
         discoveredModelsByAgent: copyRecord(legacy.discoveredModelsByAgent) ?? {},
         discoveredModelsByAgentByHost: copyRecord(legacy.discoveredModelsByAgentByHost) ?? {},
         selectedThinkingByModel: { ...legacy.selectedThinkingByModel },
-        customAgentCommand: legacy.customAgentCommand,
+        customAgentCommand: legacyString(legacy.customAgentCommand),
         instructionsByOperation: {
           ...base.instructionsByOperation,
           commitMessage: legacy.customPrompt ?? '',
@@ -175,7 +182,7 @@ export function mergeLegacyCommitMessageAiIntoSourceControlAi(
             ...(changes.enabled ? { enabled: legacy.enabled } : {}),
             ...(changes.agentId ? { agentId: legacy.agentId } : {}),
             ...(changes.customAgentCommand
-              ? { customAgentCommand: legacy.customAgentCommand }
+              ? { customAgentCommand: legacyString(legacy.customAgentCommand) }
               : {}),
             instructionsByOperation: {
               ...base.instructionsByOperation,
