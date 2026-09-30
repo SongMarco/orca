@@ -1,4 +1,8 @@
-import { getOptionalNullableNumberFlag, getOptionalNumberFlag } from '../flags'
+import {
+  getOptionalNullableNumberFlag,
+  getOptionalNumberFlag,
+  getOptionalPositiveIntegerFlag
+} from '../flags'
 
 type ReviewTargetLinks = {
   linkedIssue: number | null | undefined
@@ -13,6 +17,9 @@ export function getReviewTargetLinkFlags(
   const getFlag = options.nullable ? getOptionalNullableNumberFlag : getOptionalNumberFlag
   return {
     linkedIssue: getFlag(flags, 'issue'),
-    linkedPR: getFlag(flags, 'pr')
+    linkedPR:
+      options.nullable && flags.get('pr') === 'null'
+        ? null
+        : getOptionalPositiveIntegerFlag(flags, 'pr')
   }
 }

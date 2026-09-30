@@ -446,4 +446,25 @@ describe('orca cli worktree awareness', () => {
       noParent: false
     })
   })
+  it.each(['0', '-1', '1.5'])(
+    'rejects invalid pull request number %s on worktree.set before RPC',
+    async (value) => {
+      const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
+      const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
+      const priorExitCode = process.exitCode
+      try {
+        await main(
+          ['worktree', 'set', '--worktree', 'id:repo::/tmp/repo/child', '--pr', value, '--json'],
+          '/tmp/repo'
+        )
+        expect(callMock).not.toHaveBeenCalled()
+        expect([...logSpy.mock.calls, ...errSpy.mock.calls].flat().join('\n')).toContain(
+          'Invalid positive integer for --pr'
+        )
+        expect(process.exitCode).toBe(1)
+      } finally {
+        process.exitCode = priorExitCode
+      }
+    }
+  )
 })

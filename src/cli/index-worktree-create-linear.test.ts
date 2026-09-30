@@ -295,8 +295,14 @@ describe('orca cli worktree awareness', () => {
     })
   })
 
-  it('rejects null and non-numeric pull request values on worktree.create before RPC', async () => {
-    for (const value of ['null', 'abc']) {
+  it('rejects invalid pull request values on worktree.create before RPC', async () => {
+    for (const [value, error] of [
+      ['null', 'Invalid numeric value'],
+      ['abc', 'Invalid numeric value'],
+      ['0', 'Invalid positive integer'],
+      ['-1', 'Invalid positive integer'],
+      ['1.5', 'Invalid positive integer']
+    ]) {
       const logSpy = vi.spyOn(console, 'log').mockImplementation(() => {})
       const errSpy = vi.spyOn(console, 'error').mockImplementation(() => {})
       const priorExitCode = process.exitCode
@@ -319,7 +325,7 @@ describe('orca cli worktree awareness', () => {
 
       expect(callMock).not.toHaveBeenCalled()
       expect([...logSpy.mock.calls, ...errSpy.mock.calls].flat().join('\n')).toContain(
-        'Invalid numeric value for --pr'
+        `${error} for --pr`
       )
       expect(process.exitCode).toBe(1)
 
