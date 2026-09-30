@@ -1,3 +1,4 @@
+/** One-line flag descriptions shared by every command's help output. */
 export const FLAG_HELP_TEXT: Record<string, string> = {
   agent: '--agent <id>          Launch a known TUI agent in the first terminal',
   'base-branch': '--base-branch <ref>    Base branch/ref to create the worktree from',
@@ -52,6 +53,7 @@ export const FLAG_HELP_TEXT: Record<string, string> = {
   'restore-window': '--restore-window     Bring the target app/window forward before the operation',
   session: '--session <id>        Snapshot namespace for a related computer-use workflow',
   setup: '--setup run|skip|inherit Setup policy for repo-defined setup hooks',
+  shell: '--shell <shell>        Windows shell the terminal itself runs as',
   terminal: '--terminal <handle>  Runtime-issued terminal handle',
   text: '--text <text>          Text payload to send or type',
   'text-stdin': '--text-stdin          Read text payload from stdin',
@@ -81,6 +83,14 @@ export const FLAG_HELP_TEXT: Record<string, string> = {
   timezone: '--timezone <tz>       IANA timezone for the automation',
   enabled: '--enabled              Enable the automation',
   disabled: '--disabled             Disable the automation',
+  current: '--current              Use the current Orca worktree linked Linear issue',
+  comments: '--comments             Include threaded Linear comments',
+  children: '--children             Include recursive child issues',
+  depth: '--depth <n>            Child issue depth for --children/--full',
+  attachments: '--attachments          Include attachment metadata and URLs',
+  relations: '--relations            Include blocking, related, and duplicate links',
+  activity: '--activity             Include issue field-change history',
+  full: '--full                 Include all supported V1 issue context within caps',
   'reuse-session':
     '--reuse-session        Reuse the previous live session for existing-workspace runs',
   'fresh-session': '--fresh-session        Disable session reuse for future runs',
@@ -100,6 +110,5 @@ export const FLAG_HELP_TEXT: Record<string, string> = {
   page: '--page <id>            Stable browser page id from `orca tab list --json`',
   profile: '--profile <id>        Browser profile id',
   'show-profile': '--show-profile        Include tab profile in text output',
-  'no-ua-spoof': "--no-ua-spoof         Keep Electron's native user agent",
   format: '--format <png|jpeg>    Screenshot image format'
 }

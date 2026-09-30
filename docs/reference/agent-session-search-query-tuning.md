@@ -204,15 +204,26 @@ Which process may open, unlink and rebuild the index is PR 3b's decision. A
 second handle that finds an older schema version replaces the file while a live
 store keeps answering from the unlinked inode, and this PR is what first makes
 that reachable, because it is the first thing that reads. What PR 4 does is
-refuse to make it worse. The engine carries its own schema — the vocabulary, the
-query log and the generation triggers — and re-creates whatever of it is missing
-on every search, so a dropped object heals rather than degrading.
+refuse to make it worse. The engine restores its derived vocabulary and generation
+triggers before a search. A missing `messages_fts` fails clearly; the connection
+owner must rebuild the source index. There is no degraded-search capability state
+or query logging. Logging can be added by a caller when an evaluation consumer exists.
 
-The one it cannot re-create is the vocabulary's source, because `messages_fts`
-is the store's. With one FTS table that is also the end of the degrade: there is
-no second corpus to answer from, so an engine over an index mid-rebuild names
-typo repair as unavailable and then fails on the table it cannot read, which is
-the honest outcome — an empty page would read as an answer. `unavailable` can
-therefore no longer be reported alongside a successful search, and PR 5 should
-decide whether the field survives into the contract; it becomes reachable again
-the day something opens the index read-only.
+Each search checks the generation before retrieval and after its final content
+read. A concurrent commit rejects the page with `stale-generation`, including a
+first page without a cursor. The caller can retry from page one. No long-lived
+read transaction is needed, and a mixed page is never returned as a valid snapshot.
+
+Repository/path operators are applied before a phrase or AND route is accepted.
+Candidate truncation is reported by the rung that answered, not by every rung
+tried. Each rung of the ladder matches a superset of the one before it, so a
+rung that reached its cap with no eligible sessions is always followed by one
+that reaches it too: a full candidate set stays explicit either way.
+
+The phrase and AND rungs run for prose as well as for literal-looking input,
+over the query's tokens as typed rather than the stop-word-stripped OR body. A
+sentence pasted out of a transcript is ordinary words in order; over OR its
+common words fill the candidate limit with recent sessions and the old session
+holding the sentence never reaches ranking. The cost is two FTS queries that
+usually miss, which on the corpus above sits inside this harness's run-to-run
+noise. A one-token query still takes the rung only when it looked literal.

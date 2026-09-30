@@ -1,4 +1,5 @@
 import type { TuiAgent } from '../../shared/tui-agent'
+import type { AgentWorkspaceTrustSpawnRequest } from '../../shared/agent-workspace-trust-spawn-request'
 import type { PtyStartupIngressIntent } from '../../shared/pty-startup-ingress'
 import type { StartupCommandDelivery } from '../../shared/codex-startup-delivery'
 import type { TerminalOscLinkRange } from '../../shared/terminal-osc-link-ranges'
@@ -77,6 +78,8 @@ export type PtySpawnOptions = {
   isNewSession?: boolean
   /** Host setting forwarded additively to the process owner; old owners ignore it. */
   historyIsolationEnabled?: boolean
+  /** SSH only: workspace the relay pre-trusts for `launchAgent` before spawning; old relays ignore it. */
+  agentWorkspaceTrust?: AgentWorkspaceTrustSpawnRequest
   /** Attach the named session atomically or fail without creating a process. */
   attachOnly?: boolean
   /** Exact persisted owner expected by an attach-only routing decision. */
@@ -88,6 +91,8 @@ export type PtySpawnOptions = {
    *  changing the user's persistent default shell setting. Only consulted on
    *  Windows; ignored on macOS/Linux where shell selection is not exposed. */
   shellOverride?: string
+  /** Optional Unix interactive profile args; ignored for command and agent launches. */
+  terminalShellArgs?: string[]
   /** Preferred WSL distro for generic `wsl.exe` launches. Worktree/session
    *  distro still wins when the cwd already identifies a WSL distro. */
   terminalWindowsWslDistro?: string | null
@@ -222,6 +227,8 @@ export type IPtyProvider = {
   getCwd(id: string): Promise<string>
   getInitialCwd(id: string): Promise<string>
   clearBuffer(id: string): Promise<void>
+  /** Grounds the host's own terminal models (Reset Terminal); renderers ground themselves. */
+  resetInputModes(id: string): Promise<void>
   /** Ordered handoff from startup source authority to the live/hidden view authority. */
   closeStartupQueryAuthority?: (id: string) => Promise<number> | number
   acknowledgeDataEvent(id: string, charCount: number): void

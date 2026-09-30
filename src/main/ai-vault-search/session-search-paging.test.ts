@@ -1,4 +1,4 @@
-import { afterEach, describe, expect, it } from 'vitest'
+import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { SessionSearchRequest } from './session-search-engine-types'
 import {
   addSyntheticSession,
@@ -203,10 +203,18 @@ describe('a cursor is refused rather than reinterpreted', () => {
 
 describe('cursor encoding', () => {
   const request: SessionSearchRequest = { query: 'needle', filters: { scopePaths: ['/a'] } }
+  const incarnation = 'index-a'
 
   it('round-trips an offset within its own generation and query', () => {
     const key = sessionSearchPageKey(request)
-    expect(decodeSessionSearchCursor(encodeSessionSearchCursor(7, 40, key), 7, key)).toBe(40)
+    expect(
+      decodeSessionSearchCursor(
+        encodeSessionSearchCursor(7, 40, key, incarnation),
+        7,
+        key,
+        incarnation
+      )
+    ).toBe(40)
   })
 
   it('keys a request by what changes its ranking, and not by its page size', () => {
@@ -225,22 +233,43 @@ describe('cursor encoding', () => {
   })
 
   it.each([
-    ['a negative offset', encodeSessionSearchCursor(1, -1, 'k'), 1],
+    ['a negative offset', encodeSessionSearchCursor(1, -1, 'k', incarnation), 1],
     ['a non-integer offset', Buffer.from('{"g":1,"o":1.5,"k":"k"}').toString('base64url'), 1],
     ['a payload that is not an object', Buffer.from('"nope"').toString('base64url'), undefined],
-    ['text that is not base64url JSON', 'zzz!!', undefined]
+    ['text that is not base64url JSON', 'zzz!!', undefined],
+    // A generation is a counter: neither of these is a snapshot that ever
+    // existed, so reporting one as stale would name a generation as expected.
+    [
+      'a fractional generation',
+      Buffer.from('{"g":7.5,"o":0,"k":"k"}').toString('base64url'),
+      undefined
+    ],
+    [
+      'a negative generation',
+      Buffer.from('{"g":-1,"o":0,"k":"k"}').toString('base64url'),
+      undefined
+    ]
   ])('rejects %s as malformed, still naming the index generation', (_name, cursor, claimed) => {
     // The caller has to know which snapshot it was refused against whatever was
     // wrong with the cursor, and the generation it claimed whenever that
     // survived parsing.
     try {
-      decodeSessionSearchCursor(cursor, 7, 'k')
+      decodeSessionSearchCursor(cursor, 7, 'k', incarnation)
       expect.unreachable('a malformed cursor is not an empty one')
     } catch (error) {
       const rejected = error as SessionSearchCursorError
       expect(rejected.rejection).toBe('malformed')
       expect(rejected.actualGeneration).toBe(7)
       expect(rejected.expectedGeneration).toBe(claimed)
+    }
+  })
+
+  it('treats legacy and previous-incarnation cursors as stale', () => {
+    const legacy = Buffer.from('{"g":7,"o":1,"k":"k"}').toString('base64url')
+    for (const cursor of [legacy, encodeSessionSearchCursor(7, 1, 'k', 'index-before')]) {
+      expect(() => decodeSessionSearchCursor(cursor, 7, 'k', incarnation)).toThrow(
+        'stale-generation'
+      )
     }
   })
 })
@@ -306,4 +335,34 @@ describe('the response carries the snapshot it was built from', () => {
     expect(after).toBe(readIndexGeneration(db))
     expect(after).toBeGreaterThan(before)
   })
+})
+
+it.each([false, true])('rejects a write during page assembly (cursor: %s)', async (withCursor) => {
+  const { db, engine, store } = await open('ss-concurrent-page')
+  for (let id = 1; id <= 3; id++) {
+    addSyntheticSession(db, { id, text: 'needle' })
+  }
+  const first = engine.search({ query: 'needle', limit: 1 })
+  const prepare = db.prepare.bind(db)
+  let committed = false
+  const hook = vi.spyOn(db, 'prepare').mockImplementation((sql) => {
+    if (!committed && sql.includes('SELECT DISTINCT session_row_id FROM files')) {
+      committed = true
+      store.removeFile('/synthetic/1.jsonl')
+    }
+    return prepare(sql)
+  })
+  try {
+    expect(() =>
+      engine.search({
+        query: 'needle',
+        limit: 1,
+        ...(withCursor ? { cursor: first.page.cursor! } : {})
+      })
+    ).toThrow(SessionSearchCursorError)
+    expect(committed).toBe(true)
+    expect(readIndexGeneration(db)).toBeGreaterThan(first.generation)
+  } finally {
+    hook.mockRestore()
+  }
 })

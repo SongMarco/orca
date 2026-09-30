@@ -3,33 +3,23 @@ import type { SessionSearchRequest } from './session-search-engine-types'
 
 export type SessionSearchCursorRejection = 'stale-generation' | 'different-query' | 'malformed'
 
-/**
- * A cursor the engine refuses to honour. Typed, and thrown rather than
- * swallowed: silently restarting at page one hands the caller a page it has
- * already shown as if it were the next one, and silently re-running against a
- * newer index hands it a slice of a list it never saw.
- */
+/** Rejects invalid cursors or any page whose generation changes during its reads. */
 export class SessionSearchCursorError extends Error {
   constructor(
     readonly rejection: SessionSearchCursorRejection,
-    /**
-     * The generation the index is at now. Always present: the engine knows it
-     * before it looks at the cursor at all.
-     */
+    /** The generation observed when rejecting the request. */
     readonly actualGeneration: number,
-    /**
-     * The generation the cursor claims it was minted in. Absent only when the
-     * cursor could not be decoded far enough to carry a number, which is one of
-     * the `malformed` cases.
-     */
+    /** Cursor generation, or the generation at the start of a first-page read. */
     readonly expectedGeneration?: number
   ) {
-    super(`Search cursor rejected: ${rejection}`)
+    super(`Search page rejected: ${rejection}`)
     this.name = 'SessionSearchCursorError'
   }
 }
 
 type CursorPayload = {
+  /** Database incarnation; changes when the index is rebuilt. */
+  i: string
   /** Index generation. */
   g: number
   /**
@@ -62,8 +52,13 @@ export function sessionSearchPageKey(request: SessionSearchRequest): string {
   return createHash('sha256').update(identity).digest('base64url').slice(0, 16)
 }
 
-export function encodeSessionSearchCursor(generation: number, offset: number, key: string): string {
-  const payload: CursorPayload = { g: generation, o: offset, k: key }
+export function encodeSessionSearchCursor(
+  generation: number,
+  offset: number,
+  key: string,
+  incarnation: string
+): string {
+  const payload: CursorPayload = { i: incarnation, g: generation, o: offset, k: key }
   return Buffer.from(JSON.stringify(payload), 'utf-8').toString('base64url')
 }
 
@@ -75,7 +70,12 @@ export function encodeSessionSearchCursor(generation: number, offset: number, ke
  * can tell "the index moved under you, ask for page one" from "this cursor is
  * not ours" and act on the first without showing anyone an error.
  */
-export function decodeSessionSearchCursor(cursor: string, generation: number, key: string): number {
+export function decodeSessionSearchCursor(
+  cursor: string,
+  generation: number,
+  key: string,
+  incarnation: string
+): number {
   let payload: CursorPayload
   try {
     payload = JSON.parse(Buffer.from(cursor, 'base64url').toString('utf-8')) as CursorPayload
@@ -85,8 +85,11 @@ export function decodeSessionSearchCursor(cursor: string, generation: number, ke
   // A generation that survived parsing is worth reporting even when the rest of
   // the payload is unusable: it is what tells the caller which snapshot the
   // cursor thought it was walking.
+  // A counter, so a fraction or a negative is forged rather than stale.
   const claimed =
-    typeof payload?.g === 'number' && Number.isFinite(payload.g) ? payload.g : undefined
+    typeof payload?.g === 'number' && Number.isInteger(payload.g) && payload.g >= 0
+      ? payload.g
+      : undefined
   if (
     claimed === undefined ||
     !Number.isInteger(payload?.o) ||
@@ -99,6 +102,10 @@ export function decodeSessionSearchCursor(cursor: string, generation: number, ke
   // publish should hear about the index moving, which is the condition it
   // cannot fix by paging again.
   if (claimed !== generation) {
+    throw new SessionSearchCursorError('stale-generation', generation, claimed)
+  }
+  // Cursors minted before incarnation fencing are stale across a possible rebuild.
+  if (payload.i !== incarnation) {
     throw new SessionSearchCursorError('stale-generation', generation, claimed)
   }
   if (payload.k !== key) {

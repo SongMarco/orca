@@ -1,9 +1,10 @@
+import { AGENT_JOURNAL_THREAD_SCOPE } from '../../../shared/agent-session-journal-types'
 import { mkdtemp, rm } from 'node:fs/promises'
 import { tmpdir } from 'node:os'
 import { join } from 'node:path'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { AgentSessionJournalIdentity } from '../../../shared/agent-session-journal-types'
-import { createTrackedJournalOpener } from '../agent-session-journal/journal-store-test-open'
+import { createTrackedJournalOpener } from '../agent-session-journal/journal-host-database-test-support'
 import type { StructuredAgentSessionAdapter } from './structured-agent-session-adapter'
 import { performCancel, type AgentSessionTurnContext } from './structured-agent-session-turns'
 
@@ -29,7 +30,7 @@ afterEach(async () => {
 describe('performCancel', () => {
   it('acknowledges only the request and leaves the running lifecycle row intact', async () => {
     root = await mkdtemp(join(tmpdir(), 'orca-turn-cancel-'))
-    const journal = await journals.open({ identity: IDENTITY, journalDir: root })
+    const journal = await journals.open({ identity: IDENTITY, stateDirectory: root })
     const lifecycleIdentity = {
       provider: 'legacy' as const,
       agent: 'codex' as const,
@@ -43,7 +44,7 @@ describe('performCancel', () => {
         text: 'Agent is working…',
         turnLifecycle: { turnId: 'turn-1', state: 'running' }
       },
-      { fence: 1 }
+      { fence: 1, turnScope: AGENT_JOURNAL_THREAD_SCOPE }
     )
     const cancelTurn = vi.fn(async () => ({ cancelled: true }))
     const ctx: AgentSessionTurnContext = {
@@ -54,6 +55,7 @@ describe('performCancel', () => {
       persistOptions: async () => undefined,
       resolvedBy: 'client-1',
       publish: vi.fn(),
+      flushStreamedEvents: async () => undefined,
       now: () => 1
     }
 
@@ -74,9 +76,62 @@ describe('performCancel', () => {
     ])
   })
 
+  it('hands the adapter a live-turn read of the published journal', async () => {
+    root = await mkdtemp(join(tmpdir(), 'orca-turn-cancel-live-turn-'))
+    const journal = await journals.open({ identity: IDENTITY, stateDirectory: root })
+    const lifecycleIdentity = {
+      provider: 'legacy' as const,
+      agent: 'codex' as const,
+      sessionId: 'session-1',
+      recordId: 'turn-lifecycle:turn-1'
+    }
+    await journal.appendItem(
+      lifecycleIdentity,
+      {
+        kind: 'status',
+        text: 'Agent is working…',
+        turnLifecycle: { turnId: 'turn-1', state: 'running' }
+      },
+      { fence: 1, turnScope: AGENT_JOURNAL_THREAD_SCOPE }
+    )
+    let resolveLiveTurnId: (() => string | null) | undefined
+    const cancelTurn = vi.fn(
+      async (input: Parameters<StructuredAgentSessionAdapter['cancelTurn']>[0]) => {
+        resolveLiveTurnId = input.resolveLiveTurnId
+        return { cancelled: true }
+      }
+    )
+    const ctx: AgentSessionTurnContext = {
+      sessionId: 'session-1',
+      journal,
+      fence: 1,
+      adapter: { cancelTurn } as unknown as StructuredAgentSessionAdapter,
+      persistOptions: async () => undefined,
+      resolvedBy: 'client-1',
+      publish: vi.fn(),
+      flushStreamedEvents: async () => undefined,
+      now: () => 1
+    }
+
+    await performCancel(ctx, { clientOperationId: 'cancel-live-1', turnId: 'turn-1' })
+
+    expect(resolveLiveTurnId?.()).toBe('turn-1')
+    // Re-read, not captured: the turn ending is what the guard has to see.
+    await journal.appendItem(
+      lifecycleIdentity,
+      {
+        kind: 'status',
+        text: 'Done.',
+        turnLifecycle: { turnId: 'turn-1', state: 'completed' }
+      },
+      { fence: 1, turnScope: AGENT_JOURNAL_THREAD_SCOPE }
+    )
+    expect(resolveLiveTurnId?.()).toBeNull()
+  })
+
   it('keeps the running lifecycle when cancellation cannot be confirmed', async () => {
     root = await mkdtemp(join(tmpdir(), 'orca-turn-cancel-unconfirmed-'))
-    const journal = await journals.open({ identity: IDENTITY, journalDir: root })
+    const journal = await journals.open({ identity: IDENTITY, stateDirectory: root })
     await journal.appendItem(
       {
         provider: 'legacy',
@@ -89,7 +144,7 @@ describe('performCancel', () => {
         text: 'Agent is working…',
         turnLifecycle: { turnId: 'turn-1', state: 'running' }
       },
-      { fence: 1 }
+      { fence: 1, turnScope: AGENT_JOURNAL_THREAD_SCOPE }
     )
     const ctx: AgentSessionTurnContext = {
       sessionId: 'session-1',
@@ -101,6 +156,7 @@ describe('performCancel', () => {
       persistOptions: async () => undefined,
       resolvedBy: 'client-1',
       publish: vi.fn(),
+      flushStreamedEvents: async () => undefined,
       now: () => 1
     }
 
@@ -122,7 +178,7 @@ describe('performCancel', () => {
 
   it('stops background tasks without interrupting the foreground turn or writing a row', async () => {
     root = await mkdtemp(join(tmpdir(), 'orca-background-task-cancel-'))
-    const journal = await journals.open({ identity: IDENTITY, journalDir: root })
+    const journal = await journals.open({ identity: IDENTITY, stateDirectory: root })
     const cancelTurn = vi.fn(async () => ({ cancelled: true }))
     const stopBackgroundTasks = vi.fn(async () => ({ cancelled: true }))
     const ctx: AgentSessionTurnContext = {
@@ -133,6 +189,7 @@ describe('performCancel', () => {
       persistOptions: async () => undefined,
       resolvedBy: 'client-1',
       publish: vi.fn(),
+      flushStreamedEvents: async () => undefined,
       now: () => 1
     }
 
@@ -153,7 +210,7 @@ describe('performCancel', () => {
 
   it('routes one background task id without interrupting the foreground turn or writing a row', async () => {
     root = await mkdtemp(join(tmpdir(), 'orca-background-task-targeted-cancel-'))
-    const journal = await journals.open({ identity: IDENTITY, journalDir: root })
+    const journal = await journals.open({ identity: IDENTITY, stateDirectory: root })
     const cancelTurn = vi.fn(async () => ({ cancelled: true }))
     const stopBackgroundTasks = vi.fn(async () => ({ cancelled: true }))
     const ctx: AgentSessionTurnContext = {
@@ -164,6 +221,7 @@ describe('performCancel', () => {
       persistOptions: async () => undefined,
       resolvedBy: 'client-1',
       publish: vi.fn(),
+      flushStreamedEvents: async () => undefined,
       now: () => 1
     }
 

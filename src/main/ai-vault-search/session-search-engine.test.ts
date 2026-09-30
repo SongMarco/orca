@@ -66,6 +66,18 @@ describe('the route ladder tries phrase, then AND, then repair, then OR', () => 
     expect(ids(result).sort()).toEqual(['1', '2'])
   })
 
+  it('keeps the stop words a repaired prose phrase was typed with', async () => {
+    const { db, engine } = await open('ss-engine-typo-phrase')
+    // Two copies, so the repair only suggests a term the index really holds.
+    addSyntheticSession(db, { id: 1, text: 'relay is dropping frames' })
+    addSyntheticSession(db, { id: 2, text: 'dropping frames again here' })
+    // Repairing the body alone would re-plan `relay dropping frames`, which no
+    // phrase in the index can match, and the answer would fall to AND.
+    const result = engine.search({ query: 'relay is droppng frames' })
+    expect(result.planner.route).toBe('typo+phrase')
+    expect(ids(result)).toEqual(['1'])
+  })
+
   it('keeps every term a repaired literal was typed with', async () => {
     const { db, engine } = await open('ss-engine-typo-literal')
     addSyntheticSession(db, { id: 1, text: 'parseJson the data' })
@@ -184,8 +196,8 @@ describe('the conversation scope is a column filter, and it binds the whole quer
       (db.prepare('SELECT max(id) AS id FROM messages').get() as { id: number }).id
     )
     const plan = planSessionSearchQuery('harbor')
-    expect(sessionSearchSnippet(db, 'conversation', rowid, plan)).toEqual(EMPTY_SNIPPET)
-    expect(sessionSearchSnippet(db, 'all', rowid, plan).text).toContain('output')
+    expect(sessionSearchSnippet(db, 'conversation', rowid, plan, 'or')).toEqual(EMPTY_SNIPPET)
+    expect(sessionSearchSnippet(db, 'all', rowid, plan, 'or').text).toContain('output')
   })
 })
 
@@ -327,14 +339,13 @@ describe('source presence comes from the files table, never a stat', () => {
 })
 
 describe('the engine carries its own schema and puts it back', () => {
-  it('installs the vocabulary and the log over an index a writer built alone', async () => {
+  it('installs the vocabulary over an index a writer built alone', async () => {
     // The store creates none of these: PR 3's indexer can fill a whole index
     // before anything opens an engine over it.
     const { db, engine } = await open('ss-engine-installs')
     addSyntheticSession(db, { id: 1, text: 'the coalesces path is slow' })
     addSyntheticSession(db, { id: 2, text: 'coalesces again here' })
     const result = engine.search({ query: 'coalescs' })
-    expect(result.unavailable).toEqual([])
     expect(result.planner.route).toBe('typo+or')
     expect(ids(result).sort()).toEqual(['1', '2'])
   })
@@ -347,30 +358,21 @@ describe('the engine carries its own schema and puts it back', () => {
 
     db.exec('DROP TABLE messages_vocab')
     const after = engine.search({ query: 'coalescs' })
-    expect(after.unavailable).toEqual([])
     expect(after.planner.route).toBe('typo+or')
   })
 
-  it('names the feature it cannot serve when the vocabulary has no source left', async () => {
-    // What an index being rebuilt by another handle looks like from here. The
-    // vocabulary can be created over a missing `messages_fts` and every query
-    // against it then fails, so the probe reads the source, not the view.
-    //
-    // With one FTS table there is no scope left to answer from, so this is now
-    // the boundary of the degrade: the engine names the feature and the search
-    // fails loudly on the table it cannot read, rather than returning an empty
-    // page that looks like an answer.
+  it('fails clearly when the source index is missing', async () => {
     const { db, engine } = await open('ss-engine-vocab-source-gone')
     addSyntheticSession(db, { id: 1, text: 'coalesces here now', role: 'user' })
     db.exec('DROP TABLE messages_vocab; DROP TABLE messages_fts')
 
-    expect(ensureSessionSearchQuerySchema(db)).toEqual(['typo-repair'])
+    expect(() => ensureSessionSearchQuerySchema(db)).toThrow('missing messages_fts')
     for (const scope of ['all', 'conversation'] as const) {
-      expect(() => engine.search({ query: 'coalesces', scope })).toThrow(/no such (fts5 )?table/i)
+      expect(() => engine.search({ query: 'coalesces', scope })).toThrow(/missing messages_fts/i)
     }
   })
 
-  it('picks the feature back up when the source comes back', async () => {
+  it('answers again after the source index is restored', async () => {
     const { db, engine } = await open('ss-engine-vocab-returns')
     addSyntheticSession(db, { id: 1, text: 'coalesces here now' })
     addSyntheticSession(db, { id: 2, text: 'coalesces again here' })
@@ -380,7 +382,7 @@ describe('the engine carries its own schema and puts it back', () => {
       }
     ).sql
     db.exec('DROP TABLE messages_vocab; DROP TABLE messages_fts')
-    expect(ensureSessionSearchQuerySchema(db)).toEqual(['typo-repair'])
+    expect(() => ensureSessionSearchQuerySchema(db)).toThrow('missing messages_fts')
 
     db.exec(fts)
     // Two, because the vocabulary only offers a term at least two rows carry.
@@ -389,7 +391,6 @@ describe('the engine carries its own schema and puts it back', () => {
     // Nothing throws on the way back up, so the recovery cannot come from the
     // error path; it comes from the probe running per search.
     const restored = engine.search({ query: 'coalescs' })
-    expect(restored.unavailable).toEqual([])
     expect(restored.planner.route).toBe('typo+or')
   })
 })
@@ -467,5 +468,74 @@ describe('unicode terms survive the round trip', () => {
     const { db, engine } = await open('ss-engine-unicode')
     addSyntheticSession(db, { id: 1, text })
     expect(engine.search({ query: text }).hits).toHaveLength(1)
+  })
+})
+
+it.each(['repo:target', 'path:/work/target'])(
+  'applies %s before selecting a route',
+  async (operator) => {
+    const { db, engine } = await open('ss-route-filter')
+    addSyntheticSession(db, { id: 1, cwd: '/work/other', text: 'alpha beta' })
+    addSyntheticSession(db, { id: 2, cwd: '/work/target', text: 'alpha x beta' })
+    const result = engine.search({ query: `"alpha beta" ${operator}` })
+    expect(ids(result)).toEqual(['2'])
+    expect(result.planner.route).toBe('and')
+    expect(result.truncated.candidates).toBe(false)
+  }
+)
+
+describe('a sentence pasted out of a transcript is found behind a full candidate set', () => {
+  // The words of an ordinary sentence are common, so over OR the candidate
+  // limit fills with whatever is recent and the old session holding the
+  // sentence never reaches ranking.
+  const sentence = 'The sol review says the PR is not quite merge-ready yet'
+
+  async function pasted(sessionCandidateLimit = 600): Promise<SessionSearchHarness> {
+    const opened = await open('ss-engine-pasted-sentence', { sessionCandidateLimit })
+    addSyntheticSession(opened.db, {
+      id: 1,
+      text: `${sentence}, but not because of the implementation.`,
+      updatedAt: '2026-08-01T00:00:00.000Z'
+    })
+    for (let id = 2; id <= sessionCandidateLimit + 50; id++) {
+      addSyntheticSession(opened.db, {
+        id,
+        text: 'the review says the implementation is not quite there yet',
+        updatedAt: '2026-09-09T00:00:00.000Z'
+      })
+    }
+    return opened
+  }
+
+  it('returns the exact sentence first, over the phrase route', async () => {
+    const { engine } = await pasted()
+    const result = engine.search({ query: sentence })
+    expect(result.planner.route).toBe('phrase')
+    expect(ids(result)).toEqual(['1'])
+  })
+
+  it('does not claim the results were limited when the phrase rung answered', async () => {
+    // The OR rung would have filled the candidate limit; the rung that answered
+    // did not, and it is the answering rung the notice describes.
+    const { engine } = await pasted()
+    expect(engine.search({ query: sentence }).truncated.candidates).toBe(false)
+    expect(engine.search({ query: 'the review says yet' }).truncated.candidates).toBe(true)
+  })
+
+  it('falls to AND for prose whose words are all present but not adjacent', async () => {
+    const { db, engine } = await open('ss-engine-prose-and')
+    addSyntheticSession(db, {
+      id: 1,
+      text: 'yet quite merge-ready the PR is not what sol says a review of it'
+    })
+    const result = engine.search({ query: sentence })
+    expect(result.planner.route).toBe('and')
+    expect(ids(result)).toEqual(['1'])
+  })
+
+  it('still sends a single prose word straight to OR', async () => {
+    const { db, engine } = await open('ss-engine-prose-one-word')
+    addSyntheticSession(db, { id: 1, text: 'relay' })
+    expect(engine.search({ query: 'relay' }).planner.route).toBe('or')
   })
 })

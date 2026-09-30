@@ -1,13 +1,15 @@
 import type { AiVaultAgent } from '../../shared/ai-vault-types'
 import type { TranscriptMessageRole } from '../ai-vault/session-transcript-consumers'
-import type { SessionSearchUnavailableFeature } from './session-search-query-schema'
 
 // ENGINE types, deliberately not in src/shared: nothing here is a wire type.
 // PR 5 owns the public contract and lifts what a caller may actually receive;
 // until then a field can be added, renamed or dropped without a compat story.
 
-export const SESSION_SEARCH_LIMIT_DEFAULT = 20
-export const SESSION_SEARCH_LIMIT_MAX = 100
+export {
+  SESSION_SEARCH_LIMIT_DEFAULT,
+  SESSION_SEARCH_LIMIT_MAX,
+  resolveSessionSearchLimit
+} from '../../shared/ai-vault-search-limit'
 // Longer than this is not a query, and FTS5 pays for every term it plans.
 export const SESSION_SEARCH_QUERY_MAX_LENGTH = 512
 
@@ -135,23 +137,10 @@ export type SessionSearchTruncation = {
 
 export type SessionSearchResponse = {
   hits: SessionSearchHit[]
-  /**
-   * Engine features the index on disk cannot serve, empty on a current index.
-   * A route ladder missing its repair rung still answers; saying so is what
-   * keeps the answer honest.
-   */
-  unavailable: readonly SessionSearchUnavailableFeature[]
   planner: SessionSearchPlannerReport
   page: SessionSearchPage
   truncated: SessionSearchTruncation
   /** The index snapshot these hits came from; a cursor is only valid within it. */
   generation: number
   durationMs: number
-}
-
-export function resolveSessionSearchLimit(limit: number | undefined): number {
-  // Why clamped here and not at the caller: a non-positive limit becomes
-  // `slice(0, -1)`, which silently drops the last hit of every page.
-  const requested = Number.isInteger(limit) ? (limit as number) : SESSION_SEARCH_LIMIT_DEFAULT
-  return Math.min(Math.max(1, requested), SESSION_SEARCH_LIMIT_MAX)
 }

@@ -1,5 +1,5 @@
 import { OrchestrationError } from '../../../../orchestration/orchestration-error'
-import { defineMethod, type RpcMethod } from '../../../core'
+import { defineMethod } from '../../../core'
 import { describeUnconfirmedAgentStop } from '../../../../../../shared/pty-liveness-verdict'
 import { ORCHESTRATION_WORKER_STOP_VERDICT_RUNTIME_CAPABILITY } from '../../../../../../shared/protocol-version'
 import type { RuntimeStatus } from '../../../../../../shared/runtime-types'
@@ -12,7 +12,7 @@ import {
 import { isStructuredWorkerHandle } from '../../../../structured-worker-identity'
 import { WorkerDispatchParams } from '../../../../../../shared/rpc-contract/orchestration-worker-stop-params'
 
-export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
+export const ORCHESTRATION_WORKER_STOP_METHODS = [
   defineMethod({
     name: 'orchestration.workerStop',
     params: WorkerDispatchParams,
@@ -141,6 +141,7 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
           })
         }
         const observation = await inspectWorkerTerminal(runtime, db, params.dispatch)
+        const liveHandle = observation.terminalHandle ?? handle
         // The host exit can settle this stop while terminal inspection is awaiting inventory.
         if (db.getWorkerDispatch(params.dispatch)?.state === 'stopped') {
           runtime.notifyMessageArrived(`dispatch:${params.dispatch}`, 'status')
@@ -201,7 +202,7 @@ export const ORCHESTRATION_WORKER_STOP_METHODS: RpcMethod[] = [
           }
         }
         const closed = await runtime
-          .closeTerminal(handle)
+          .closeTerminal(liveHandle)
           .then((close) => ({ close }) as const)
           .catch(
             (error: unknown) =>
