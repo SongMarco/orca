@@ -32,28 +32,12 @@ import {
   resolveProjectCreateRepoSelector
 } from '../worktree-project-target'
 import {
-  assertCreateParentFlagsCompatible,
+  assertWorktreeParentFlagsCompatible,
   resolveCreateParentSelector
 } from './worktree-create-parent-selector'
 import { getOptionalLinearIssueLinkFlag } from './worktree-linear-issue-link'
 import { getReviewTargetLinkFlags } from './worktree-review-link-flags'
 import { assertGitLabLinkFlagProjectsMatch } from './worktree-gitlab-link-context'
-
-function assertParentWorktreeFlagsCompatible(flags: Map<string, string | boolean>): void {
-  if (flags.has('parent-worktree') && flags.get('no-parent') === true) {
-    throw new RuntimeClientError(
-      'invalid_argument',
-      'Choose either --parent-worktree or --no-parent, not both.'
-    )
-  }
-  const parentWorktree = flags.get('parent-worktree')
-  if (
-    flags.has('parent-worktree') &&
-    (typeof parentWorktree !== 'string' || parentWorktree === '')
-  ) {
-    throw new RuntimeClientError('invalid_argument', 'Missing required --parent-worktree')
-  }
-}
 
 function getEnvParentWorkspace(): string | undefined {
   const workspaceId = process.env.ORCA_WORKSPACE_ID
@@ -183,7 +167,7 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
     printResult(result, json, formatWorktreeShow)
   },
   'worktree create': async ({ flags, client, cwd, json }) => {
-    assertCreateParentFlagsCompatible(flags)
+    assertWorktreeParentFlagsCompatible(flags)
     assertWorkspaceTargetFlagsCompatible(flags)
     const reviewLinks = getReviewTargetLinkFlags(flags)
     const callerTerminalHandle =
@@ -258,7 +242,10 @@ export const WORKTREE_HANDLERS: Record<string, CommandHandler> = {
     printResult(result, json, formatWorktreeShow)
   },
   'worktree set': async ({ flags, client, cwd, json }) => {
-    assertParentWorktreeFlagsCompatible(flags)
+    assertWorktreeParentFlagsCompatible(
+      flags,
+      'Choose either --parent-worktree or --no-parent, not both.'
+    )
     const reviewLinks = getReviewTargetLinkFlags(flags, { nullable: true })
     const linearIssueLink = getOptionalLinearIssueLinkFlag(flags, 'linear-issue', {
       allowNull: true
