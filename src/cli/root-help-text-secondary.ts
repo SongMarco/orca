@@ -164,7 +164,7 @@ export const ROOT_HELP_TEXT_SECONDARY = [
   '  $ orca worktree current',
   '  $ orca worktree set --worktree active --comment "waiting on review"',
   '  $ orca worktree set --worktree active --linear-issue null',
-  '  $ orca worktree set --worktree active --gitlab-mr !77',
+  "  $ orca worktree set --worktree active --gitlab-mr '!77'",
   '  $ orca worktree set --worktree active --gitlab-issue https://gitlab.example.com/group/project/-/issues/42',
   '  $ orca worktree ps --limit 10',
   '  $ orca file open-changed --mode diff',
